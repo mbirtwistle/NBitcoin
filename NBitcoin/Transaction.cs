@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 
 namespace NBitcoin
 {
@@ -1128,7 +1129,7 @@ namespace NBitcoin
 			}
 		}
 
-		uint nVersion = 1;
+		uint nVersion = 2;
 
 		public uint Version
 		{
@@ -1144,11 +1145,13 @@ namespace NBitcoin
 		TxInList vin;
 		TxOutList vout;
 		LockTime nLockTime;
-
+		String strTxComment;
 		public Transaction()
 		{
 			vin = new TxInList(this);
 			vout = new TxOutList(this);
+			nVersion = 2;
+			strTxComment = string.Empty;
 		}
 
 		public Transaction(string hex, ProtocolVersion version = ProtocolVersion.PROTOCOL_VERSION)
@@ -1288,6 +1291,11 @@ namespace NBitcoin
 				}
 			}
 			stream.ReadWriteStruct(ref nLockTime);
+			if (nVersion>1 ){
+				var bytes = Encoding.ASCII.GetBytes(strTxComment);
+				stream.ReadWriteAsVarString(ref bytes);
+			}
+
 		}
 
 		#endregion
