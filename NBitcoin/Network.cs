@@ -136,7 +136,7 @@ namespace NBitcoin
 		/// </summary>
 		BIP66
 
-		//TODO Netcoin buried deployments
+	    //TODO Netcoin buried deployments
 	}
 
 	public class Consensus
@@ -881,7 +881,7 @@ namespace NBitcoin
 			base58Prefixes[(int)Base58Type.COLORED_ADDRESS] = new byte[] { 0x13 };                                      // TODO Netcoin set base58prefix for this feature
 
 			var encoder = new Bech32Encoder("net");  // TODO Netcoin set Bech32Encoder hrp
-			bech32Encoders[(int)Bech32Type.WITNESS_PUBKEY_ADDRESS] = encoder;
+			bech32Encoders[(int)Bech32Type.WITNESS_PUBKEY_ADDRESS] = encoder; 
 			bech32Encoders[(int)Bech32Type.WITNESS_SCRIPT_ADDRESS] = encoder;
 
 #if !NOSOCKET
