@@ -524,7 +524,7 @@ namespace NBitcoin
 			dt = dt.ToUniversalTime();
 			if(dt < unixRef)
 				throw new ArgumentOutOfRangeException("The supplied datetime can't be expressed in unix timestamp");
-			var result = (dt - unixRef).TotalSeconds;
+			var result = (dt.Ticks - unixRef.Ticks) / TimeSpan.TicksPerSecond;
 			if(result > UInt32.MaxValue)
 				throw new ArgumentOutOfRangeException("The supplied datetime can't be expressed in unix timestamp");
 			return (ulong)result;
@@ -532,18 +532,17 @@ namespace NBitcoin
 
 		public static DateTimeOffset UnixTimeToDateTime(uint timestamp)
 		{
-			var span = TimeSpan.FromSeconds(timestamp);
-			return unixRef + span;
+			return unixRef.AddTicks((long)timestamp * TimeSpan.TicksPerSecond);
 		}
 		public static DateTimeOffset UnixTimeToDateTime(ulong timestamp)
 		{
-			var span = TimeSpan.FromSeconds(timestamp);
-			return unixRef + span;
+			if (timestamp > UInt32.MaxValue) throw new ArgumentOutOfRangeException("timestamp");
+			return UnixTimeToDateTime((uint)timestamp);
 		}
 		public static DateTimeOffset UnixTimeToDateTime(long timestamp)
 		{
-			var span = TimeSpan.FromSeconds(timestamp);
-			return unixRef + span;
+			if (timestamp > UInt32.MaxValue) throw new ArgumentOutOfRangeException("timestamp");
+			return UnixTimeToDateTime((uint)timestamp);
 		}
 
 
