@@ -10,7 +10,7 @@ namespace NBitcoin
 	/// <summary>
 	/// A BlockHeader chained with all its ancestors
 	/// </summary>
-	public class ChainedBlock
+	partial class ChainedBlock
 	{
 		// pointer to the hash of the block, if any. memory is owned by this CBlockIndex
 		uint256 phashBlock;

@@ -10,12 +10,14 @@ namespace NBitcoin.Policy
 	{
 		public StandardTransactionPolicy()
 		{
+			//TODO Netcoin Check standard Transaction Policy Values
 			ScriptVerify = NBitcoin.ScriptVerify.Standard;
 			MaxTransactionSize = 100000;
 			MaxTxFee = new FeeRate(Money.Coins(0.1m));
 			MinRelayTxFee = new FeeRate(Money.Satoshis(5000));
 			CheckFee = true;
 			CheckScriptPubKey = true;
+			MaxTxCommentLength = 140;
 		}
 
 		public int? MaxTransactionSize
@@ -223,6 +225,14 @@ namespace NBitcoin.Policy
 		/// Check the standardness of scriptPubKey
 		/// </summary>
 		public bool CheckScriptPubKey
+		{
+			get;
+			set;
+		}
+		/// <summary>
+		/// Netcoin MaxTxCommentLength
+		/// </summary>
+		public int MaxTxCommentLength
 		{
 			get;
 			set;

@@ -136,7 +136,7 @@ namespace NBitcoin
 		/// </summary>
 		BIP66
 
-	    //TODO Netcoin buried deployments
+		//TODO Netcoin buried deployments
 	}
 
 	public class Consensus
@@ -422,16 +422,19 @@ namespace NBitcoin
 				_MinimumChainWork = value;
 			}
 		}
-
+		/// <summary>
+		/// number of blocks between POW retargets (PowTargetTimeSpan / PowTargetSpacing)
+		/// </summary>
 		public long DifficultyAdjustmentInterval
 		{
 			get
 			{
-				return ((long)PowTargetTimespan.TotalSeconds / (long)PowTargetSpacing.TotalSeconds);
+				return PowTargetTimespan.Ticks / PowTargetSpacing.Ticks;
 			}
 		}
 
 		int _MinerConfirmationWindow;
+
 		public int MinerConfirmationWindow
 		{
 			get
@@ -510,6 +513,94 @@ namespace NBitcoin
 			}
 		}
 
+
+		private Target _PosLimit;
+
+		public Target PosLimit
+		{
+			get { return _PosLimit; }
+			set
+			{
+				EnsureNotFrozen();
+				_PosLimit = value;
+			}
+		}
+
+		TimeSpan _StakeMinAge;
+
+		public TimeSpan StakeMinAge
+		{
+			get
+			{
+				return _StakeMinAge;
+			}
+			set
+			{
+				EnsureNotFrozen();
+				_StakeMinAge = value;
+			}
+		}
+		TimeSpan _StakeMaxAge;
+
+		public TimeSpan StakeMaxAge
+		{
+			get
+			{
+				return _StakeMaxAge;
+			}
+			set
+			{
+				EnsureNotFrozen();
+				_StakeMaxAge = value;
+			}
+		}
+		TimeSpan _StakeTargetSpacing;
+		public TimeSpan StakeTargetSpacing
+		{
+			get
+			{
+				return _StakeTargetSpacing;
+			}
+			set
+			{
+				EnsureNotFrozen();
+				_StakeTargetSpacing = value;
+			}
+		}
+
+		TimeSpan _StakeModifierInterval;
+		public TimeSpan StakeModifierInterval
+		{
+			get
+			{
+				return _StakeModifierInterval;
+			}
+			set
+			{
+				EnsureNotFrozen();
+				_StakeModifierInterval = value;
+			}
+		}
+		public long StakeModifierIntervalSeconds
+		{
+			get
+			{
+				return _StakeModifierInterval.Ticks / TimeSpan.TicksPerSecond;
+			}
+		}
+		int _CoinstakeMaturity;
+		public int CoinstakeMaturity
+		{
+			get
+			{
+				return _CoinstakeMaturity;
+			}
+			set
+			{
+				EnsureNotFrozen();
+				_CoinstakeMaturity = value;
+			}
+		}
 		bool frozen = false;
 		public void Freeze()
 		{
@@ -549,6 +640,13 @@ namespace NBitcoin
 			consensus.GetPoWHash = GetPoWHash;
 			consensus._CoinType = CoinType;
 			consensus._LitecoinWorkCalculation = _LitecoinWorkCalculation;
+
+			consensus._PosLimit = _PosLimit;
+			consensus._StakeMinAge = _StakeMinAge;
+			consensus._StakeMaxAge = _StakeMaxAge;
+			consensus._StakeTargetSpacing = _StakeTargetSpacing;
+			consensus._StakeModifierInterval = _StakeModifierInterval;
+			consensus._CoinstakeMaturity = _CoinstakeMaturity;
 		}
 	}
 	public partial class Network
@@ -725,7 +823,7 @@ namespace NBitcoin
 			name = "Main";
 
 			consensus.CoinbaseMaturity = 10;
-			consensus.SubsidyHalvingInterval = 210000;
+			consensus.SubsidyHalvingInterval = 129600;
 			consensus.MajorityEnforceBlockUpgrade = 0;
 			consensus.MajorityRejectBlockOutdated = 0;
 			consensus.MajorityWindow = 1000;
@@ -735,13 +833,20 @@ namespace NBitcoin
 			consensus.BIP34Hash = new uint256("0x000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8");
 			consensus.PowLimit = new Target(new uint256("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
 			consensus.MinimumChainWork = new uint256("0x0000000000000000000000000000000000000000002cb971dd56d1c583c20f90");
-			consensus.PowTargetTimespan = TimeSpan.FromSeconds(60); 
-			consensus.PowTargetSpacing = TimeSpan.FromSeconds(10 * 60);
+			consensus.PowTargetTimespan = TimeSpan.FromSeconds(60 * 60); // NetCoin: every 60 minutes initially, before other algorithms
+			consensus.PowTargetSpacing = TimeSpan.FromSeconds(60); // NetCoin: 60 sec
 			consensus.PowAllowMinDifficultyBlocks = false;
 			consensus.PowNoRetargeting = false;
 			consensus.RuleChangeActivationThreshold = 1916; // 95% of 2016
-			consensus.MinerConfirmationWindow = 2016; // nPowTargetTimespan / nPowTargetSpacing
+			consensus.MinerConfirmationWindow = 60; // nPowTargetTimespan / nPowTargetSpacing
 			consensus.LitecoinWorkCalculation = true;
+
+			consensus.PosLimit = new Target(new uint256("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+			consensus.StakeMinAge = TimeSpan.FromHours(1); // 1 hour
+			consensus.StakeMaxAge = TimeSpan.FromDays(30); // 30 days
+			consensus.StakeTargetSpacing = TimeSpan.FromMinutes(2); // NetCoin: 60 sec
+			consensus.StakeModifierInterval = TimeSpan.FromMinutes(10); // time to elapse before new modifier is computed
+			consensus.CoinstakeMaturity = 50; // number of confirms before stake interest can be spent
 
 			consensus.BIP9Deployments[BIP9Deployments.Segwit] = new BIP9DeploymentsParameters(1, 0, 0);
 
@@ -765,18 +870,18 @@ namespace NBitcoin
 			base58Prefixes[(int)Base58Type.PUBKEY_ADDRESS] = new byte[] { (112) };
 			base58Prefixes[(int)Base58Type.SCRIPT_ADDRESS] = new byte[] { (5) };
 			base58Prefixes[(int)Base58Type.SECRET_KEY] = new byte[] { (240) };
-			base58Prefixes[(int)Base58Type.ENCRYPTED_SECRET_KEY_NO_EC] = new byte[] { 0x01, 0x42 };						// TODO Netcoin set base58prefix for this feature
-			base58Prefixes[(int)Base58Type.ENCRYPTED_SECRET_KEY_EC] = new byte[] { 0x01, 0x43 };						// TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.ENCRYPTED_SECRET_KEY_NO_EC] = new byte[] { 0x01, 0x42 };                     // TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.ENCRYPTED_SECRET_KEY_EC] = new byte[] { 0x01, 0x43 };                        // TODO Netcoin set base58prefix for this feature
 			base58Prefixes[(int)Base58Type.EXT_PUBLIC_KEY] = new byte[] { (0x04), (0x88), (0xB2), (0x1E) };
 			base58Prefixes[(int)Base58Type.EXT_SECRET_KEY] = new byte[] { (0x04), (0x88), (0xAD), (0xE4) };
-			base58Prefixes[(int)Base58Type.PASSPHRASE_CODE] = new byte[] { 0x2C, 0xE9, 0xB3, 0xE1, 0xFF, 0x39, 0xE2 };	// TODO Netcoin set base58prefix for this feature
-			base58Prefixes[(int)Base58Type.CONFIRMATION_CODE] = new byte[] { 0x64, 0x3B, 0xF6, 0xA8, 0x9A };			// TODO Netcoin set base58prefix for this feature
-			base58Prefixes[(int)Base58Type.STEALTH_ADDRESS] = new byte[] { 0x2a };										// TODO Netcoin set base58prefix for this feature
-			base58Prefixes[(int)Base58Type.ASSET_ID] = new byte[] { 23 };												// TODO Netcoin set base58prefix for this feature
-			base58Prefixes[(int)Base58Type.COLORED_ADDRESS] = new byte[] { 0x13 };										// TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.PASSPHRASE_CODE] = new byte[] { 0x2C, 0xE9, 0xB3, 0xE1, 0xFF, 0x39, 0xE2 };  // TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.CONFIRMATION_CODE] = new byte[] { 0x64, 0x3B, 0xF6, 0xA8, 0x9A };            // TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.STEALTH_ADDRESS] = new byte[] { 0x2a };                                      // TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.ASSET_ID] = new byte[] { 23 };                                               // TODO Netcoin set base58prefix for this feature
+			base58Prefixes[(int)Base58Type.COLORED_ADDRESS] = new byte[] { 0x13 };                                      // TODO Netcoin set base58prefix for this feature
 
 			var encoder = new Bech32Encoder("net");  // TODO Netcoin set Bech32Encoder hrp
-			bech32Encoders[(int)Bech32Type.WITNESS_PUBKEY_ADDRESS] = encoder; 
+			bech32Encoders[(int)Bech32Type.WITNESS_PUBKEY_ADDRESS] = encoder;
 			bech32Encoders[(int)Bech32Type.WITNESS_SCRIPT_ADDRESS] = encoder;
 
 #if !NOSOCKET
@@ -808,7 +913,7 @@ namespace NBitcoin
 			consensus.BuriedDeployments[BuriedDeployments.BIP65] = 0;
 			consensus.BuriedDeployments[BuriedDeployments.BIP66] = 0;
 			consensus.BIP34Hash = new uint256();
-			consensus.PowLimit = new Target(new uint256("0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+			consensus.PowLimit = new Target(new uint256("0x0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
 			consensus.MinimumChainWork = new uint256("0x0000000000000000000000000000000000000000000000198b4def2baa9338d6");
 			consensus.PowTargetTimespan = TimeSpan.FromSeconds(14 * 24 * 60 * 60); // two weeks
 			consensus.PowTargetSpacing = TimeSpan.FromSeconds(10 * 60);
@@ -1388,6 +1493,7 @@ namespace NBitcoin
 
 		public Money GetReward(int nHeight)
 		{
+			//TODO Netcoin reward function
 			long nSubsidy = new Money(50 * Money.COIN);
 			int halvings = nHeight / consensus.SubsidyHalvingInterval;
 

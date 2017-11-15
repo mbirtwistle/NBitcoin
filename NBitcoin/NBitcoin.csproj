@@ -34,6 +34,7 @@
     <DefineConstants>$(DefineConstants);NETCORE;NOTRACESOURCE;NOCUSTOMSSLVALIDATION</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="MersenneTwister" Version="1.0.5" />
     <PackageReference Include="Newtonsoft.Json" Version="9.0.1" />
     <PackageReference Include="System.Net.Requests" Version="4.3.0" />
 	  <PackageReference Include="System.Net.Http" Version="4.3.2" />

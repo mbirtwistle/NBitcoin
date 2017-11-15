@@ -632,6 +632,16 @@ namespace NBitcoin
 			ret.FromBytes(Encoders.Hex.DecodeData(hex));
 			return ret;
 		}
+		public void SetEmpty()
+		{
+			_Value = 0;
+			publicKey = Script.Empty;
+		}
+
+		public bool IsEmpty()
+		{
+			return (_Value == 0 && publicKey == Script.Empty);
+		}
 	}
 
 	public class IndexedTxIn
@@ -1406,7 +1416,11 @@ namespace NBitcoin
 				return (Inputs.Count == 1 && Inputs[0].PrevOut.IsNull);
 			}
 		}
-
+		public bool IsCoinStake()
+		{
+			// ppcoin: the coin stake transaction is marked with the first output empty
+			return (vin.Count > 0 && (!vin[0].PrevOut.IsNull) && vout.Count >= 2 && vout[0].IsEmpty());
+		}
 		public static uint CURRENT_VERSION = 2;
 		public static uint MAX_STANDARD_TX_SIZE = 100000;
 

@@ -42,6 +42,7 @@ namespace NBitcoin
 
 
 		// header
+		//TODO Netcoin Block Current Version
 		const int CURRENT_VERSION = 3;
 
 		uint256 hashPrevBlock;
@@ -338,7 +339,15 @@ namespace NBitcoin
 			}
 		}
 
+		bool IsProofOfStake()
+		{
+			return (vtx.Count > 1 && vtx[1].IsCoinStake());
+		}
 
+		bool IsProofOfWork()
+		{
+			return !IsProofOfStake();
+		}
 		void SetNull()
 		{
 			header.SetNull();
