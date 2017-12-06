@@ -25,8 +25,9 @@ namespace NBitcoin
 
 		// proof-of-stake specific fields
 
-		uint nStakeTime;
-
+		DateTimeOffset nStakeTime;
+		OutPoint prevoutStake;
+		uint256 hashProof;
 		#endregion
 
 
@@ -81,6 +82,31 @@ namespace NBitcoin
 			return x;
 		}
 		bool ProtocolRetargetingFixed(Consensus consensus, int nHeight) { return consensus.PowAllowMinDifficultyBlocks || nHeight > 1345000; }
+
+		// TODO Netcoin - New constructor includes POS logic from Main.cpp::AddToBlockIndex
+		public bool ProofOfStake_AddToBlockIndex_Logic(Consensus consensus, ConcurrentChain chain,uint256 hashProof)
+		{
+			// ppcoin: compute chain trust score
+			nChainTrust = (pindexNew->pprev ? pindexNew->pprev->nChainTrust : 0) + pindexNew->GetBlockTrust();
+
+			// ppcoin: compute stake entropy bit for stake modifier
+			if (!SetStakeEntropyBit(GetStakeEntropyBit()))
+				throw new InvalidOperationException("AddToBlockIndex() : SetStakeEntropyBit() failed");
+
+			// Record proof hash value
+			this.hashProof = hashProof;
+
+			// ppcoin: compute stake modifier
+			UInt64 nStakeModifier = 0;
+			bool fGeneratedStakeModifier = false;
+			if (!ProofOfStakeKernel.ComputeNextStakeModifier(consensus, chain, previous, out nStakeModifier, out fGeneratedStakeModifier))
+				throw new InvalidOperationException("AddToBlockIndex() : ComputeNextStakeModifier() failed");
+			SetStakeModifier(nStakeModifier, fGeneratedStakeModifier);
+			nStakeModifierChecksum = ProofOfStakeKernel.GetStakeModifierChecksum(consensus, pindexNew);
+			if (!CheckStakeModifierCheckpoints(pindexNew->nHeight, pindexNew->nStakeModifierChecksum))
+				return error("AddToBlockIndex() : Rejected by stake modifier checkpoint height=%d, modifier=0x%016"PRI64x, pindexNew->nHeight, nStakeModifier);
+			return true;
+		}
 		private Int64 GetProofOfWorkReward(Consensus consensus, int nHeight, Int64 nFees, uint256 prevHash)
 		{
 			Int64 nSubsidy;
