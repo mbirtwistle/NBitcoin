@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using NBitcoin.BouncyCastle.Math;
+using NBitcoin.Crypto;
+using System.IO;
 
 namespace NBitcoin
 {
@@ -73,31 +75,41 @@ namespace NBitcoin
 	// select a block from the candidate blocks in vSortedByTimestamp, excluding
 	// already selected blocks in vSelectedBlocks, and with timestamp up to
 	// nSelectionIntervalStop.
-	static bool SelectBlockFromCandidates(ConcurrentChain chain, List<Tuple<long, uint256>> vSortedByTimestamp, SortedDictionary<uint256, ChainedBlock> mapSelectedBlocks,
-		DateTimeOffset selectionIntervalStopTime, ulong nStakeModifierPrev, ChainedBlock pindexSelected)
+	static bool SelectBlockFromCandidates(ConcurrentChain chain, ChainedBlock chainIndex, SortedDictionary<long,uint256> sortedByTimestamp, Dictionary<uint256, ChainedBlock> mapSelectedBlocks,
+		DateTimeOffset selectionIntervalStop, ulong nStakeModifierPrev, out ChainedBlock pindexSelected)
 	{
 		bool fSelected = false;
 		uint256 hashBest = 0;
-			pindexSelected = null;
-		foreach( var item in vSortedByTimestamp )
-    {
-			if (!chain.Contains(item.Item2))
-				throw new System.Exception(string.Format("SelectBlockFromCandidates: failed to find block index for candidate block {0}", item.Item2.ToString()));
-			ChainedBlock pindex = chain.GetBlock(item.Item2);
-			if (fSelected && pindex.Header.BlockTime > selectionIntervalStopTime)
+		pindexSelected = null;
+
+		foreach( var item in sortedByTimestamp )
+		{
+			var pindex = chainIndex.FindAncestorOrSelf(item.Value);
+
+				if (pindex == null)
+					return false; // error("SelectBlockFromCandidates: failed to find block index for candidate block {0}", item.Item2.ToString()));
+
+			if (fSelected && pindex.Header.BlockTime > selectionIntervalStop)
 				break;
 			if (mapSelectedBlocks.ContainsKey(pindex.HashBlock) )
 				continue;
-			// compute the selection hash by hashing its proof-hash and the
-			// previous proof-of-stake modifier
-			CDataStream ss(SER_GETHASH, 0);
-			ss << pindex.hashProof << nStakeModifierPrev;
-			uint256 hashSelection = Hash(ss.begin(), ss.end());
-			// the selection hash is divided by 2**32 so that proof-of-stake block
-			// is always favored over proof-of-work block. this is to preserve
-			// the energy efficiency property
-			if (pindex.IsProofOfStake())
+				// compute the selection hash by hashing its proof-hash and the
+				// previous proof-of-stake modifier
+				uint256 hashSelection;
+				using (var ms = new MemoryStream())
+				{
+					var serializer = new BitcoinStream(ms, true);
+					serializer.ReadWrite(pindex.hashProof);
+					serializer.ReadWrite(nStakeModifierPrev);
+
+					hashSelection = Hashes.Hash256(ms.ToArray());
+				}
+				// the selection hash is divided by 2**32 so that proof-of-stake block
+				// is always favored over proof-of-work block. this is to preserve
+				// the energy efficiency property
+				if (pindex.IsProofOfStake())
 				hashSelection >>= 32;
+
 			if (fSelected && hashSelection < hashBest)
 			{
 				hashBest = hashSelection;
@@ -110,9 +122,11 @@ namespace NBitcoin
 				pindexSelected = pindex;
 			}
 		}
-		if (fDebug && GetBoolArg("-printstakemodifier"))
-			printf("SelectBlockFromCandidates: selection hash=%s\n", hashBest.ToString().c_str());
-		return fSelected;
+
+			//if (fDebug && GetBoolArg("-printstakemodifier"))
+			//	printf("SelectBlockFromCandidates: selection hash=%s\n", hashBest.ToString().c_str());
+
+			return fSelected;
 	}
 
 	// Stake Modifier (hash modifier of proof-of-stake):
@@ -147,32 +161,28 @@ namespace NBitcoin
 			return true;
 
 			// Sort candidate blocks by timestamp
-			var vSortedByTimestamp = new List<Tuple<long, uint256>>();
-		vSortedByTimestamp.Capacity=((int)(64L * consensus.StakeModifierInterval.Ticks / consensus.PowTargetSpacing.Ticks));
+			var vSortedByTimestamp = new SortedDictionary<long, uint256>();
 		long nSelectionInterval = GetStakeModifierSelectionInterval(consensus);
 		long nSelectionIntervalStart = ((long)Utils.DateTimeToUnixTimeLong(pindexPrev.Header.BlockTime) / consensus.StakeModifierIntervalSeconds) * consensus.StakeModifierIntervalSeconds - nSelectionInterval;
 		ChainedBlock pindex = pindexPrev;
 		while ((pindex!=null) && (long)Utils.DateTimeToUnixTimeLong(pindexPrev.Header.BlockTime) >= nSelectionIntervalStart)
 		{
-			vSortedByTimestamp.Add(new Tuple<long, uint256>((long)Utils.DateTimeToUnixTimeLong(pindexPrev.Header.BlockTime), pindex.Header.GetHash()));
+			vSortedByTimestamp.Add((long)Utils.DateTimeToUnixTimeLong(pindexPrev.Header.BlockTime), pindex.Header.GetHash());
 			pindex = pindex.Previous;
 		}
 		int nHeightFirstCandidate = (pindex!=null) ? (pindex.Height + 1) : 0;
-			vSortedByTimestamp.Reverse();
-			vSortedByTimestamp.Sort((x, y) => x.Item1.CompareTo(y.Item1));
-
 
 		// Select 64 blocks from candidate blocks to generate stake modifier
 		ulong nStakeModifierNew = 0;
 		long nSelectionIntervalStop = nSelectionIntervalStart;
-		var mapSelectedBlocks = new SortedDictionary<uint256, ChainedBlock>();
+		var mapSelectedBlocks = new Dictionary<uint256, ChainedBlock>();
 		for (int nRound = 0; nRound < Math.Min(64, vSortedByTimestamp.Count()); nRound++)
 		{
 			// add an interval section to the current selection round
 			nSelectionIntervalStop += GetStakeModifierSelectionIntervalSection(consensus,nRound);
-			// select a block from the candidates of current round
-			if (!SelectBlockFromCandidates(chain, vSortedByTimestamp, mapSelectedBlocks, Utils.UnixTimeToDateTime(nSelectionIntervalStop), nStakeModifier, pindex))
-				throw new System.Exception(String.Format("ComputeNextStakeModifier: unable to select block at round {0}", nRound));
+				// select a block from the candidates of current round
+				if (!SelectBlockFromCandidates(chain, pindexPrev, vSortedByTimestamp, mapSelectedBlocks, Utils.UnixTimeToDateTime(nSelectionIntervalStop), nStakeModifier, out pindex))
+					return false; //	throw new System.Exception(String.Format("ComputeNextStakeModifier: unable to select block at round {0}", nRound));
 			// write the entropy bit of the selected block
 			nStakeModifierNew |= (((ulong)pindex.GetStakeEntropyBit()) << nRound);
 			// add the selected block from candidates to selected list
@@ -277,8 +287,8 @@ namespace NBitcoin
 			throw new System.Exception("CheckStakeKernelHash() : min age violation");
 
 		BigInteger bnTargetPerCoinDay;
-		bnTargetPerCoinDay=BigInteger.ValueOf(nBits);
-		Money nValueIn = txPrev.Outputs[prevout.N].Value;
+		bnTargetPerCoinDay= new Target(nBits).ToBigInteger();
+			Money nValueIn = txPrev.Outputs[prevout.N].Value;
 
 		uint256 hashBlockFrom = blockFrom.Header.GetHash();
 			
@@ -287,17 +297,28 @@ namespace NBitcoin
 				.Divide(BigInteger.ValueOf(Money.COIN * (24 * 60 * 60))); // coindays
 		targetProofOfStake = new Target(bnCoinDayWeight.Multiply(bnTargetPerCoinDay));
 		// Calculate hash
-		CDataStream ss(SER_GETHASH, 0);
 		ulong nStakeModifier = 0;
 		int nStakeModifierHeight = 0;
 		DateTimeOffset nStakeModifierTime = Utils.UnixTimeToDateTime(0);
 
 		if (!GetKernelStakeModifier(consensus, chain, hashBlockFrom,out nStakeModifier,out nStakeModifierHeight,out nStakeModifierTime, fPrintProofOfStake))
 			return false;
-		ss << nStakeModifier;
+		
+			using (var ms = new MemoryStream())
+			{
+				var serializer = new BitcoinStream(ms, true);
 
-		ss << nTimeBlockFrom << nTxPrevOffset << nTimeBlockFrom << prevout.N << nTimeTx;
-		hashProofOfStake = Hash(ss.begin(), ss.end());
+				serializer.ReadWrite(nStakeModifier);
+				serializer.ReadWrite(Utils.DateTimeToUnixTime(nTimeBlockFrom));
+				
+
+				serializer.ReadWrite(nTxPrevOffset);
+				serializer.ReadWrite(Utils.DateTimeToUnixTime(nTimeBlockFrom));
+				serializer.ReadWrite(prevout.N);
+				serializer.ReadWrite(Utils.DateTimeToUnixTime(nTimeTx));
+
+				hashProofOfStake = Hashes.Hash256(ms.ToArray());
+			}
 			/* TODO: Netcoin - POS logging
 			if (fPrintProofOfStake)
 		{
@@ -312,9 +333,9 @@ namespace NBitcoin
 				hashProofOfStake.ToString().c_str());
 		}
 		*/
-		// Now check if proof-of-stake hash meets target protocol
-		
-		if (BigInteger(hashProofOfStake)) > bnCoinDayWeight.Multiply( bnTargetPerCoinDay))
+			// Now check if proof-of-stake hash meets target protocol
+
+			if (new BigInteger(hashProofOfStake.ToString()).CompareTo( bnCoinDayWeight.Multiply( bnTargetPerCoinDay)) > 0 )
 			return false;
 		/* TODO: Netcoin - POS logging
 		if (fDebug && !fPrintProofOfStake)
@@ -332,33 +353,69 @@ namespace NBitcoin
 		*/
 		return true;
 	}
+		private static bool VerifySignature(Transaction txFrom, Transaction txTo, int txToInN, ScriptVerify flagScriptVerify)
+		{
+			var input = txTo.Inputs[txToInN];
 
-	// Check kernel hash target and coinstake signature
-	bool CheckProofOfStake(Transaction tx, DateTimeOffset txTime, uint nBits, uint256 hashProofOfStake, uint256 targetProofOfStake)
-	{
-		if (!tx.IsCoinStake())
-			throw new System.Exception(string.Format("CheckProofOfStake() : called on non-coinstake {0}", tx.GetHash().ToString()));
+			if (input.PrevOut.N >= txFrom.Outputs.Count)
+				return false;
+
+			if (input.PrevOut.Hash != txFrom.GetHash())
+				return false;
+
+			var output = txFrom.Outputs[input.PrevOut.N];
+
+			var txData = new PrecomputedTransactionData(txFrom);
+			var checker = new TransactionChecker(txTo, txToInN, output.Value, txData);
+			var ctx = new ScriptEvaluationContext { ScriptVerify = flagScriptVerify };
+
+			return ctx.VerifyScript(input.ScriptSig, output.ScriptPubKey, checker);
+		}
+		// Check kernel hash target and coinstake signature
+		//		bool CheckProofOfStake(Transaction tx, DateTimeOffset txTime, uint nBits, uint256 hashProofOfStake, uint256 targetProofOfStake)
+		public static bool CheckProofOfStake(IBlockRepository blockStore, ITransactionRepository transactionStore, IBlockTransactionMapStore mapStore,
+			 ChainedBlock pindexPrev, ChainedBlock prevBlockStake, Transaction tx, uint nBits, out uint256 hashProofOfStake, out uint256 targetProofOfStake)
+
+		{
+			targetProofOfStake = null; hashProofOfStake = null;
+			if (!tx.IsCoinStake())
+				return false;  // throw new System.Exception(string.Format("CheckProofOfStake() : called on non-coinstake {0}", tx.GetHash().ToString()));
 
 		// Kernel (input 0) must match the stake hash target per coin age (nBits)
-		var txin = tx.Inputs[0];
+		TxIn txIn = tx.Inputs[0];
+	
+			// First try finding the previous transaction in database
 
-		// First try finding the previous transaction in database
-		TxDB txdb("r");
-		Transaction txPrev;
-		TxIndex txindex;
-		if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
-			return tx.DoS(1, error("CheckProofOfStake() : INFO: read txPrev failed"));  // previous transaction not in main chain, may occur during initial download
+			Transaction txPrev = transactionStore.Get(txIn.PrevOut.Hash);
+			if (txPrev == null)
+				return false; // tx.DoS(1, error("CheckProofOfStake() : INFO: read txPrev failed"));  // previous transaction not in main chain, may occur during initial download
 
-		// Verify signature
-		if (!VerifySignature(txPrev, tx, 0, SCRIPT_VERIFY_NONE, 0))
-			return tx.DoS(100, error("CheckProofOfStake() : VerifySignature failed on coinstake %s", tx.GetHash().ToString()));
+			// Verify signature
+			if (!VerifySignature(txPrev, tx, 0, ScriptVerify.None))
+				return false; // tx.DoS(100, error("CheckProofOfStake() : VerifySignature failed on coinstake %s", tx.GetHash().ToString()));
 
-		// Read block header
-		ChainedBlock block;
-		if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
-			return fDebug ? error("CheckProofOfStake() : read block failed") : false; // unable to read block of previous transaction
+			// Read block header
+			
+			uint256 blockHashPrev = mapStore.GetBlockHash(txIn.PrevOut.Hash);
+			Block block = (blockHashPrev == null) ? null : blockStore.GetBlock(blockHashPrev);
+			if (block == null)
+				return false; //fDebug? error("CheckProofOfStake() : read block failed") : false; // unable to read block of previous transaction
 
-		if (!CheckStakeKernelHash(nBits, block, txindex.pos.nTxPos - txindex.pos.nBlockPos, txPrev, txin.prevout, txTime, hashProofOfStake, targetProofOfStake, fDebug))
+
+			// Min age requirement
+			// TODO Netcoin When / How to implement Netcoin POS Version 3 Hard fork??
+			/*
+			if (IsProtocolV3((int)tx.Time))
+			{
+				int nDepth = 0;
+				if (IsConfirmedInNPrevBlocks(blockStore, txPrev, pindexPrev, StakeMinConfirmations - 1, ref nDepth))
+					return false; // tx.DoS(100, error("CheckProofOfStake() : tried to stake at depth %d", nDepth + 1));
+			}
+			*/
+			if (!CheckStakeKernelHash(pindexPrev, nBits, block, txPrev, prevBlockStake, txIn.PrevOut, tx.Time, out hashProofOfStake, out targetProofOfStake, false))
+				return false; // tx.DoS(1, error("CheckProofOfStake() : INFO: check kernel failed on coinstake %s, hashProof=%s", tx.GetHash().ToString(), hashProofOfStake.ToString())); // may occur during initial download or if behind on block chain sync
+
+			if (!CheckStakeKernelHash(nBits, block, txindex.pos.nTxPos - txindex.pos.nBlockPos, txPrev, txin.prevout, txTime, hashProofOfStake, targetProofOfStake, fDebug))
 			return tx.DoS(1, error("CheckProofOfStake() : INFO: check kernel failed on coinstake %s, hashProof=%s", tx.GetHash().ToString(), hashProofOfStake.ToString())); // may occur during initial download or if behind on block chain sync
 
 		return true;
@@ -372,22 +429,10 @@ namespace NBitcoin
 	}
 
 	// Get stake modifier checksum
-	uint GetStakeModifierChecksum(Consensus consensus, ChainedBlock pindex)
-	{
-		// assert (pindex.Previous || pindex.GetBlockHash() == (!fTestNet ? hashGenesisBlock : hashGenesisBlockTestNet));
-		assert(pindex.Previous!=null || pindex.Header.GetHash() == consensus.HashGenesisBlock);
-		// Hash previous checksum with flags, hashProofOfStake and nStakeModifier
-		CDataStream ss(SER_GETHASH, 0);
-		if (pindex.Previous)
-			ss << pindex.Previous.nStakeModifierChecksum;
-		ss << pindex.nFlags << (pindex.IsProofOfStake() ? pindex.hashProof : 0) << pindex.nStakeModifier;
-		uint256 hashChecksum = Hash(ss.begin(), ss.end());
-		hashChecksum >>= (256 - 32);
-		return hashChecksum.GetLow64();
-	}
+	
 
 	// Check stake modifier hard checkpoints
-	bool CheckStakeModifierCheckpoints(Consensus consensus, int nHeight, uint nStakeModifierChecksum)
+	public static bool CheckStakeModifierCheckpoints(Consensus consensus, int nHeight, uint nStakeModifierChecksum)
 	{
 		MapModifierCheckpoints  checkpoints = (TestNet() ? mapStakeModifierCheckpointsTestNet : mapStakeModifierCheckpoints);
 

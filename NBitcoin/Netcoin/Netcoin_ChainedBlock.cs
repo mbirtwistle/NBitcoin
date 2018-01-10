@@ -5,6 +5,8 @@ using System.Text;
 using System.Threading.Tasks;
 using MersenneTwister;
 using NBitcoin.BouncyCastle.Math;
+using System.IO;
+using NBitcoin.Crypto;
 
 namespace NBitcoin
 {
@@ -19,15 +21,15 @@ namespace NBitcoin
 		private const uint BLOCK_STAKE_ENTROPY = (1 << 1); // entropy bit for stake modifier
 		private const uint BLOCK_STAKE_MODIFIER = (1 << 2); // regenerated stake modifier
 
-
+		public uint256 nChainTrust; // trust score of block chain
 		public UInt64 nStakeModifier; // hash modifier for proof-of-stake
-		uint nStakeModifierChecksum; // checksum of index; in-memeory only
+		public uint nStakeModifierChecksum; // checksum of index; in-memeory only
 
 		// proof-of-stake specific fields
 
 		DateTimeOffset nStakeTime;
 		OutPoint prevoutStake;
-		uint256 hashProof;
+		public uint256 hashProof;
 		#endregion
 
 
@@ -82,12 +84,38 @@ namespace NBitcoin
 			return x;
 		}
 		bool ProtocolRetargetingFixed(Consensus consensus, int nHeight) { return consensus.PowAllowMinDifficultyBlocks || nHeight > 1345000; }
+		public uint GetStakeModifierChecksum(Consensus consensus)
+		{
+			// assert (pindex.Previous || pindex.GetBlockHash() == (!fTestNet ? hashGenesisBlock : hashGenesisBlockTestNet));
+			//assert(pindex.Previous!=null || pindex.Header.GetHash() == consensus.HashGenesisBlock);
+			if (this.Previous == null || this.Header.GetHash() != consensus.HashGenesisBlock)
+				throw new InvalidOperationException("pindex is not in the correct chain");
 
+			// Hash previous checksum with flags, hashProofOfStake and nStakeModifier
+			/*	CDataStream ss(SER_GETHASH, 0);
+				if (pindex.Previous)
+					ss << pindex.Previous.nStakeModifierChecksum;
+				ss << pindex.nFlags << (pindex.IsProofOfStake() ? pindex.hashProof : 0) << pindex.nStakeModifier;
+		
+			    uint256 hashChecksum = Hash(ss.begin(), ss.end());
+			*/
+			uint256 hashChecksum;
+			using (var ms = new MemoryStream())
+			{
+				var serializer = new BitcoinStream(ms, true);
+
+				if (this.Previous != null) serializer.ReadWrite(this.Previous.nStakeModifierChecksum);
+				serializer.ReadWrite(this.nFlags);
+				serializer.ReadWrite(this.IsProofOfStake() ? this.hashProof : 0);
+				serializer.ReadWrite(this.nStakeModifier);
+				hashChecksum = Hashes.Hash256(ms.ToArray());
+			}
+			hashChecksum >>= (256 - 32);
+			return (uint) hashChecksum.GetLow64();
+		}
 		// TODO Netcoin - New constructor includes POS logic from Main.cpp::AddToBlockIndex
 		public bool ProofOfStake_AddToBlockIndex_Logic(Consensus consensus, ConcurrentChain chain,uint256 hashProof)
-		{
-			// ppcoin: compute chain trust score
-			nChainTrust = (pindexNew->pprev ? pindexNew->pprev->nChainTrust : 0) + pindexNew->GetBlockTrust();
+		{   var pindexNew = new ChainedBlock(header, header.GetHash(), chain.GetBlock(header.HashPrevBlock));
 
 			// ppcoin: compute stake entropy bit for stake modifier
 			if (!SetStakeEntropyBit(GetStakeEntropyBit()))
@@ -99,12 +127,12 @@ namespace NBitcoin
 			// ppcoin: compute stake modifier
 			UInt64 nStakeModifier = 0;
 			bool fGeneratedStakeModifier = false;
-			if (!ProofOfStakeKernel.ComputeNextStakeModifier(consensus, chain, previous, out nStakeModifier, out fGeneratedStakeModifier))
+			if (!ProofOfStakeKernel.ComputeNextStakeModifier(consensus, chain, pindexNew.Previous, out nStakeModifier, out fGeneratedStakeModifier))
 				throw new InvalidOperationException("AddToBlockIndex() : ComputeNextStakeModifier() failed");
 			SetStakeModifier(nStakeModifier, fGeneratedStakeModifier);
-			nStakeModifierChecksum = ProofOfStakeKernel.GetStakeModifierChecksum(consensus, pindexNew);
-			if (!CheckStakeModifierCheckpoints(pindexNew->nHeight, pindexNew->nStakeModifierChecksum))
-				return error("AddToBlockIndex() : Rejected by stake modifier checkpoint height=%d, modifier=0x%016"PRI64x, pindexNew->nHeight, nStakeModifier);
+			nStakeModifierChecksum = pindexNew.GetStakeModifierChecksum(consensus);
+			if (!ProofOfStakeKernel.CheckStakeModifierCheckpoints(consensus, pindexNew.Height, pindexNew.nStakeModifierChecksum))
+				return false; // error("AddToBlockIndex() : Rejected by stake modifier checkpoint height=%d, modifier=0x%016"PRI64x, pindexNew->nHeight, nStakeModifier);
 			return true;
 		}
 		private Int64 GetProofOfWorkReward(Consensus consensus, int nHeight, Int64 nFees, uint256 prevHash)
