@@ -57,7 +57,7 @@ namespace NBitcoin.Tests
 		[Fact]
 		public void CanUseMultipleWallets()
 		{
-			using(var builder = NodeBuilder.Create(version: "0.15.0"))
+			using(var builder = NodeBuilder.Create())
 			{
 				var node = builder.CreateNode();
 				node.ConfigParameters.Add("wallet", "w1");
@@ -76,7 +76,7 @@ namespace NBitcoin.Tests
 				rpc = rpc.PrepareBatch();
 				var b = rpc.GetBalanceAsync();
 				var b2 = rpc.GetBestBlockHashAsync();
-				var a = rpc.SendCommandAsync("gettransaction", block.Transactions.First().GetHash().ToString());
+				var a = rpc.SendCommandAsync(RPCOperations.gettransaction, block.Transactions.First().GetHash().ToString());
 				rpc.SendBatch();
 				b.GetAwaiter().GetResult();
 				b2.GetAwaiter().GetResult();
@@ -162,7 +162,61 @@ namespace NBitcoin.Tests
 		}
 
 		[Fact]
-		public void EstimateFeeRate()
+		public async Task CanGetTxOutFromRPCAsync()
+		{
+			using (var builder = NodeBuilder.Create())
+			{
+				var rpc = builder.CreateNode().CreateRPCClient();
+				builder.StartAll();
+
+				// 1. Generate some blocks and check if gettxout gives the right outputs for the first coin
+				var blocksToGenerate = 101;
+				uint256[] blockHashes = await rpc.GenerateAsync(blocksToGenerate);
+				var txId = rpc.GetTransactions(blockHashes.First()).First().GetHash();
+				GetTxOutResponse getTxOutResponse = await rpc.GetTxOutAsync(txId, 0);
+				Assert.NotNull(getTxOutResponse); // null if spent
+				Assert.Equal(blockHashes.Last(), getTxOutResponse.BestBlock);
+				Assert.Equal(getTxOutResponse.Confirmations, blocksToGenerate);
+				Assert.Equal(Money.Coins(50), getTxOutResponse.TxOut.Value);
+				Assert.NotNull(getTxOutResponse.TxOut.ScriptPubKey);
+				Assert.Equal("pubkey", getTxOutResponse.ScriptPubKeyType);
+				Assert.True(getTxOutResponse.IsCoinBase);
+
+				// 2. Spend the first coin
+				var address = new Key().PubKey.GetAddress(rpc.Network);
+				Money sendAmount = Money.Parse("49");
+				txId = await rpc.SendToAddressAsync(address, sendAmount);
+
+				// 3. Make sure if we don't include the mempool into the database the txo will not be considered utxo
+				getTxOutResponse = await rpc.GetTxOutAsync(txId, 0, false);
+				Assert.Null(getTxOutResponse);
+
+				// 4. Find the output index we want to check
+				var tx = rpc.GetRawTransaction(txId);
+				int index = -1;
+				for (int i = 0; i < tx.Outputs.Count; i++)
+				{
+					if(tx.Outputs[i].Value == sendAmount)
+					{
+						index = i;
+					}
+				}
+				Assert.NotEqual(index, -1);
+				
+				// 5. Make sure the expected amounts are received for unconfirmed transactions
+				getTxOutResponse = await rpc.GetTxOutAsync(txId, index, true);
+				Assert.NotNull(getTxOutResponse); // null if spent
+				Assert.Equal(blockHashes.Last(), getTxOutResponse.BestBlock);
+				Assert.Equal(getTxOutResponse.Confirmations, 0);
+				Assert.Equal(Money.Coins(49), getTxOutResponse.TxOut.Value);
+				Assert.NotNull(getTxOutResponse.TxOut.ScriptPubKey);
+				Assert.Equal("pubkeyhash", getTxOutResponse.ScriptPubKeyType);
+				Assert.False(getTxOutResponse.IsCoinBase);
+			}
+		}
+
+		[Fact]
+		public void EstimateSmartFee()
 		{
 			using(var builder = NodeBuilder.Create())
 			{
@@ -170,14 +224,14 @@ namespace NBitcoin.Tests
 				node.Start();
 				node.Generate(101);
 				var rpc = node.CreateRPCClient();
-				Assert.Throws<NoEstimationException>(() => rpc.EstimateFeeRate(1));
+				Assert.Throws<NoEstimationException>(() => rpc.EstimateSmartFee(1));
 				Assert.Equal(Money.Coins(50m), rpc.GetBalance(1, false));
 				Assert.Equal(Money.Coins(50m), rpc.GetBalance());
 			}
 		}
 
 		[Fact]
-		public void TryEstimateFeeRate()
+		public void TryEstimateSmartFee()
 		{
 			using(var builder = NodeBuilder.Create())
 			{
@@ -185,7 +239,7 @@ namespace NBitcoin.Tests
 				node.Start();
 				node.Generate(101);
 				var rpc = node.CreateRPCClient();
-				Assert.Null(rpc.TryEstimateFeeRate(1));
+				Assert.Null(rpc.TryEstimateSmartFee(1));
 			}
 		}
 
@@ -267,7 +321,7 @@ namespace NBitcoin.Tests
 		public void CanImportMultiAddresses()
 		{
 			// Test cases borrowed from: https://github.com/bitcoin/bitcoin/blob/master/test/functional/importmulti.py
-			using(var builder = NodeBuilder.Create(version: "0.15.1"))
+			using(var builder = NodeBuilder.Create())
 			{
 				var rpc = builder.CreateNode().CreateRPCClient();
 				builder.StartAll();
@@ -561,7 +615,7 @@ namespace NBitcoin.Tests
 				builder.StartAll();
 				Key key = new Key();
 				var passphrase = "password1234";
-				rpc.SendCommand("encryptwallet", passphrase);
+				rpc.SendCommand(RPCOperations.encryptwallet, passphrase);
 				builder.Nodes[0].Restart();
 				rpc.ImportAddress(key.PubKey.GetAddress(Network.RegTest), TestAccount, false);
 				BitcoinAddress address = rpc.GetAccountAddress(TestAccount);
@@ -911,21 +965,6 @@ namespace NBitcoin.Tests
 				}
 			}
 		}
-
-		[Fact]
-		public void CanEstimatePriority()
-		{
-			using(var builder = NodeBuilder.Create())
-			{
-				var node = builder.CreateNode();
-				node.Start();
-				var rpc = node.CreateRPCClient();
-				node.Generate(101);
-				var priority = rpc.EstimatePriority(10);
-				Assert.True(priority > 0 || priority == -1);
-			}
-		}
-
 
 		private void AssertJsonEquals(string json1, string json2)
 		{
