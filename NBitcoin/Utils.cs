@@ -709,7 +709,7 @@ namespace NBitcoin
 		{
 			return ToUInt32(value, 0, littleEndian);
 		}
-		internal static ulong ToUInt64(byte[] value, bool littleEndian)
+		public static ulong ToUInt64(byte[] value, bool littleEndian)
 		{
 			if(littleEndian)
 			{
